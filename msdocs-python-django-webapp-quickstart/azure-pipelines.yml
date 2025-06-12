@@ -1,0 +1,77 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.12'
+        addToPath: true
+      
+    - script: |
+        python -m venv .env
+        source .env/bin/activate
+
+    - script: |
+        python -m venv .env
+        source .env/bin/activate
+        pip install --target="$(pwd)" -r requirements.txt
+        export PYTHONPATH=$PYTHONPATH:$(pwd)
+        echo $PYTHONPATH
+        echo "PYTHONPATH is: $PYTHONPATH"
+        pip list --format=columns
+        pip show django
+        pip install --upgrade pip
+      displayName: 'Install dependencies'
+
+    - script: |
+        python manage.py collectstatic --noinput
+        python manage.py migrate
+      displayName: 'Run Django commands'
+
+    - task: CopyFiles@2
+      inputs:
+        contents: '**'
+        targetFolder: '$(Build.ArtifactStagingDirectory)'
+      
+
+    - task: UniversalPackages@0
+      inputs:
+        command: 'publish'
+        publishDirectory: '$(Build.ArtifactStagingDirectory)'
+        feedsToUsePublish: 'internal'
+        vstsFeedPublish: '8cd639bb-358c-4636-8e1e-2e32b960fe85/4078e4d0-bbe3-4e55-91ce-5d5534915c10'
+        vstsFeedPackagePublish: 'drop'
+        versionOption: 'major'
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'drop'
+
+- stage: Deploy
+  jobs:
+  - deployment: DeployWeb
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'drop'
+              downloadPath: '$(System.ArtifactsDirectory)'
+
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'py-sp'
+              appName: 'pyapp'
+              package: '$(System.ArtifactsDirectory)/drop'
+              startUpCommand: 'gunicorn --bind=0.0.0.0:8000 quickstartproject.wsgi:application'
